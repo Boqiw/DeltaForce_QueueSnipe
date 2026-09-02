@@ -1,0 +1,32 @@
+[app]
+database = "samegame.sqlite3"
+host = "127.0.0.1"
+port = 5000
+sample_interval_sec = 2
+code_poll_interval_sec = 45
+confirmation_frames = 3
+overlap_window_sec = 300
+log_level = "INFO"
+
+[ocr]
+# ROI 支持绝对像素 [x,y,w,h]，或用 [0,1] 之间的相对比例自动适配分辨率。
+# 对局代码位于画面左上角，实测标定自 2492x1415 截图（x 18~388, y 130~151）。
+roi = [0.005, 0.085, 0.16, 0.035]
+pattern = "^CNUID[0-9]{33}$"
+missing_alert_frames = 30
+
+[[streamers]]
+platform = "bilibili"
+room_id = "example-room"
+name = "示例主播"
+monitor_enabled = true
+priority = 5
+url = "https://live.example.invalid/room"
+# capture_source 可选 stream、camera 或 file；camera 可填写 OBS 虚拟摄像头编号。
+capture_source = "stream"
+capture_input = ""
+
+# 解析命令必须输出一个可播放 URL；{url} 会替换为直播间 URL。
+# 不提供任何爬虫或战绩 API。抖音解析器可替换而不改业务代码。
+[platforms.douyin]
+resolver_command = ""

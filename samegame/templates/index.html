@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>撞车监测</title>
+<style>body{font-family:system-ui;max-width:1000px;margin:2rem auto}section{margin:1rem 0}li{padding:.5rem;border-bottom:1px solid #ddd}.hit{background:#fff2a8}</style>
+<h1>三角洲行动撞车监测</h1><p>本地运营面板 · 录制/授权/出片：V1</p>
+<section><h2>监控主播</h2><ul id="streamers"></ul></section>
+<section><h2>撞车事件</h2><ul id="collisions"></ul></section>
+<section><h2>素材清单</h2><p>整局录制已按决策后移至 V1，当前无素材可发布。</p></section>
+<script>
+async function load(){let s=await (await fetch('/api/streamers')).json(),c=await (await fetch('/api/collisions')).json();
+document.querySelector('#streamers').innerHTML=s.map(x=>`<li>${x.name}（${x.platform}/${x.room_id}）— ${x.status==='live'?'直播中':(x.status==='starting'?'正在连接':(x.status==='reconnecting'?'重连中':(x.monitor_enabled?'等待开播':'已停用')))} · 当前局代码：<b>${x.current_match_code||'暂无'}</b></li>`).join('')||'<li>暂无配置</li>';
+document.querySelector('#collisions').innerHTML=c.map(x=>`<li class="hit"><b>${x.names}</b> 撞车（代码 ${x.match_code}，${x.started_at}）</li>`).join('')||'<li>暂无事件</li>'}
+load();setInterval(load,5000);
+</script></html>
