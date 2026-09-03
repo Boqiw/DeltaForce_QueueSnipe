@@ -3,6 +3,7 @@ from .collision import CollisionService
 
 def create_app(db):
     app = Flask(__name__)
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
     @app.get("/")
     def index(): return render_template("index.html")
     @app.get("/api/streamers")

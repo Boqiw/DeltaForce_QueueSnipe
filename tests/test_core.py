@@ -110,6 +110,35 @@ def test_no_collision_when_same_minute_different_prefix(tmp_path):
     c.confirmed(sb, key_b, "2026-09-03T14:00:40+00:00")
     assert db.execute("SELECT count(*) n FROM collision_events").fetchone()["n"] == 0
 
+def test_no_collision_for_same_streamer_orphan_sessions(tmp_path):
+    # 崩溃/重启会残留未 ended 的孤儿 session：同一主播的两个 session
+    # 在 300s 窗口内 confirm 到同一对局码，绝不能判成"自己撞自己"。
+    db = Database(tmp_path / "x.sqlite3")
+    a = db.execute("INSERT INTO streamers(platform,room_id,name) VALUES('x','1','A')").lastrowid
+    sa = db.execute("INSERT INTO live_sessions(streamer_id,started_at) VALUES(?,?)",
+                    (a, "2026-09-03T14:00:00+00:00")).lastrowid
+    sb = db.execute("INSERT INTO live_sessions(streamer_id,started_at) VALUES(?,?)",
+                    (a, "2026-09-03T14:02:00+00:00")).lastrowid
+    c = CollisionService(db)
+    c.confirmed(sa, "AB12", "2026-09-03T14:02:30+00:00")
+    c.confirmed(sb, "AB12", "2026-09-03T14:03:00+00:00")
+    assert db.execute("SELECT count(*) n FROM collision_events").fetchone()["n"] == 0
+
+def test_collision_requires_two_different_streamers(tmp_path):
+    # 对照：同一对局码分属两个不同主播 → 仍正常判撞车。
+    db = Database(tmp_path / "x.sqlite3")
+    a = db.execute("INSERT INTO streamers(platform,room_id,name) VALUES('x','1','A')").lastrowid
+    b = db.execute("INSERT INTO streamers(platform,room_id,name) VALUES('x','2','B')").lastrowid
+    sa = db.execute("INSERT INTO live_sessions(streamer_id,started_at) VALUES(?,?)",
+                    (a, "2026-09-03T14:00:00+00:00")).lastrowid
+    sb = db.execute("INSERT INTO live_sessions(streamer_id,started_at) VALUES(?,?)",
+                    (b, "2026-09-03T14:00:10+00:00")).lastrowid
+    c = CollisionService(db)
+    c.confirmed(sa, "AB12", "2026-09-03T14:01:00+00:00")
+    c.confirmed(sb, "AB12", "2026-09-03T14:02:00+00:00")
+    assert db.execute("SELECT count(*) n FROM collision_events").fetchone()["n"] == 1
+
+
 def test_same_match_across_minutes_does_not_churn_observation(tmp_path):
     # 同一局跨分钟（1400/1401）只更新同一观测行，不再每分钟插新行。
     db = Database(tmp_path / "x.sqlite3")

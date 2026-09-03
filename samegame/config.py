@@ -4,6 +4,22 @@ import re
 import tomllib
 
 @dataclass
+class DiscoveryConfig:
+    """三角洲板块自动发现配置。
+
+    board_url   板块页 URL（留空 = 发现线程只记日志跳过）
+    min_viewers 人气阈值：在播房间全登记，仅 >= 此值才启用监控
+    interval_sec 两轮抓取间隔
+    scrolls      板块页向下滚动的次数（触发懒加载翻页）
+    miss_limit   主播连续 N 轮不在板块列表 => 停用监控（保留历史）
+    """
+    board_url: str = ""
+    min_viewers: int = 10000
+    interval_sec: float = 180
+    scrolls: int = 8
+    miss_limit: int = 2
+
+@dataclass
 class StreamerConfig:
     platform: str
     room_id: str
@@ -35,11 +51,13 @@ class Settings:
     missing_alert_frames: int = 30
     streamers: list[StreamerConfig] = field(default_factory=list)
     platforms: dict = field(default_factory=dict)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
 
 def load_config(path: str | Path) -> Settings:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
     app, ocr = raw.get("app", {}), raw.get("ocr", {})
+    d = raw.get("discovery", {})
     s = Settings(
         database=app.get("database", "samegame.sqlite3"), host=app.get("host", "127.0.0.1"),
         port=int(app.get("port", 5000)), sample_interval_sec=float(app.get("sample_interval_sec", 2)),
@@ -57,6 +75,13 @@ def load_config(path: str | Path) -> Settings:
         missing_alert_frames=int(ocr.get("missing_alert_frames", 30)),
         streamers=[StreamerConfig(**x) for x in raw.get("streamers", [])],
         platforms=raw.get("platforms", {}),
+        discovery=DiscoveryConfig(
+            board_url=d.get("board_url", ""),
+            min_viewers=int(d.get("min_viewers", 10000)),
+            interval_sec=float(d.get("interval_sec", 180)),
+            scrolls=int(d.get("scrolls", 8)),
+            miss_limit=int(d.get("miss_limit", 2)),
+        ),
     )
     re.compile(s.pattern)
     return s

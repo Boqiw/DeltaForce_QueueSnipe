@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from .collector import StreamResolver
@@ -17,7 +18,7 @@ class LiveMonitor:
         self.db, self.resolver, self.settings = db, resolver, settings
         self.collisions = CollisionService(db, settings.overlap_window_sec)
 
-    def run_forever(self, streamer):
+    def run_forever(self, streamer, stop_event=None):
         """每路主播的常驻监控线程主体（在 __main__ 里每路启动一个，不退出）。
 
         循环：resolve →（识别到直播则）监控并在断流时用同一 URL 重开 →
@@ -25,16 +26,21 @@ class LiveMonitor:
         断流只重开当前 URL，URL 过期/多次失败才重新跑浏览器解析。
         未来接入每周开播排期时，把"本次是否要探测"的决策收敛在本方法
         （非开播时段直接 sleep 即可），其余逻辑不用动。
+
+        stop_event 置位时（主播被板块停用/删除）尽快退出；不传则永续运行。
         """
         settings = self.settings
+        stop = stop_event or threading.Event()
         backoff = settings.offline_backoff_base_sec
-        while True:
+        while not stop.is_set():
             went_live = False
             try:
-                went_live = self.run_streamer(streamer)
+                went_live = self.run_streamer(streamer, stop)
             except Exception as exc:  # noqa: BLE001
                 log.exception("streamer_monitor_crashed", extra={
                     "streamer": streamer.name, "error": str(exc)})
+            if stop.is_set():
+                break
             if went_live:
                 # 刚下播/断流结束：短等待后快速重查，方便主播马上又开播。
                 delay = settings.stream_end_retry_sec
@@ -45,20 +51,27 @@ class LiveMonitor:
                 backoff = min(backoff * 2, settings.offline_backoff_max_sec)
             log.info("streamer_next_probe", extra={
                 "streamer": streamer.name, "delay_sec": delay, "went_live": went_live})
-            time.sleep(delay)
+            if stop.wait(delay):
+                break
 
-    def run_streamer(self, streamer) -> bool:
+    def run_streamer(self, streamer, stop_event=None) -> bool:
         """一次 resolve + 直播监控周期；返回本周期是否进入过 live。
 
         直播中 read 失败不再整段结束：URL 有效期内用同一 URL 直接重开拉流
         （不重跑浏览器解析），超过 reopen_max 次连续失败或 URL 过期才结束
         本周期，由 run_forever 重新 resolve。live_sessions / recognizer /
         观测累计在重开之间保持不变，避免会话每分钟抖动。
+
+        stop_event 置位时在帧循环/重开等待处尽快退出，且不再把状态改写成
+        "reconnecting"（由 worker 负责标记 stopped/disabled）。
         """
+        stop = stop_event or threading.Event()
         self.db.set_streamer_status(streamer.id, "starting", at=now())
         source = getattr(streamer, "capture_source", "stream")
         if source != "stream":
-            return self._run_non_stream(streamer, source)
+            return self._run_non_stream(streamer, source, stop)
+        if stop.is_set():
+            return False
 
         try:
             result = self.resolver.resolve(streamer.platform, streamer.url)
@@ -83,6 +96,8 @@ class LiveMonitor:
         reopen = 0
         try:
             while True:
+                if stop.is_set():
+                    break
                 capture = None
                 try:
                     capture = open_capture("stream", result.url)
@@ -102,6 +117,8 @@ class LiveMonitor:
                     next_code_poll = 0.0
                     got_frame = False
                     while True:
+                        if stop.is_set():
+                            break
                         ok, frame = capture.read()
                         if not ok:
                             break
@@ -140,10 +157,12 @@ class LiveMonitor:
                         "deadline_reached": time.monotonic() >= deadline})
                 if reopen > settings.reopen_max or time.monotonic() >= deadline:
                     break
-                time.sleep(settings.reopen_interval_sec)
+                if stop.wait(settings.reopen_interval_sec):
+                    break
             if session_id is None:
-                self.db.set_streamer_status(streamer.id, "reconnecting",
-                                            "stream url unusable", now())
+                if not stop.is_set():
+                    self.db.set_streamer_status(streamer.id, "reconnecting",
+                                                "stream url unusable", now())
                 return False
             return True
         finally:
@@ -151,13 +170,17 @@ class LiveMonitor:
                 self.collisions.end_code(session_id)
                 self.db.execute("UPDATE live_sessions SET ended_at=? WHERE id=?",
                                 (now(), session_id))
-                self.db.set_streamer_status(streamer.id, "reconnecting",
-                                            "stream ended; retrying", now())
+                if not stop.is_set():
+                    self.db.set_streamer_status(streamer.id, "reconnecting",
+                                                "stream ended; retrying", now())
 
-    def _run_non_stream(self, streamer, source) -> bool:
+    def _run_non_stream(self, streamer, source, stop_event=None) -> bool:
         """camera / file 等固定输入源：打开后一直读到结束。"""
         settings = self.settings
+        stop = stop_event or threading.Event()
         capture_input = streamer.capture_input
+        if stop.is_set():
+            return False
         try:
             capture = open_capture(source, capture_input)
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
@@ -178,6 +201,8 @@ class LiveMonitor:
         next_code_poll = 0.0
         try:
             while True:
+                if stop.is_set():
+                    break
                 ok, frame = capture.read()
                 if not ok:
                     break
@@ -201,5 +226,6 @@ class LiveMonitor:
             self.collisions.end_code(session_id)
             self.db.execute("UPDATE live_sessions SET ended_at=? WHERE id=?",
                             (now(), session_id))
-            self.db.set_streamer_status(streamer.id, "reconnecting", "stream ended; retrying", now())
+            if not stop.is_set():
+                self.db.set_streamer_status(streamer.id, "reconnecting", "stream ended; retrying", now())
         return True

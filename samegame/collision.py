@@ -21,10 +21,18 @@ class CollisionService:
     def end_code(self, session_id):
         self.db.execute("UPDATE match_code_observations SET status='ended' WHERE session_id=? AND status='active'", (session_id,))
     def _collide(self, session_id, code, at):
-        rows = self.db.execute("""SELECT o.session_id, o.first_seen_at FROM match_code_observations o
+        rows = self.db.execute("""SELECT o.session_id, o.first_seen_at, l.streamer_id
+          FROM match_code_observations o JOIN live_sessions l ON l.id=o.session_id
           WHERE o.match_code=? AND o.status='active'""", (code,)).fetchall()
+        me = self.db.execute("SELECT streamer_id FROM live_sessions WHERE id=?",
+                             (session_id,)).fetchone()
+        my_streamer = me["streamer_id"] if me else None
         for other in rows:
-            if other["session_id"] == session_id: continue
+            if other["session_id"] == session_id:
+                continue
+            # 同一直播间的多个 session（崩溃残留/断流重开/重启孤儿）永远不算撞车。
+            if my_streamer is not None and other["streamer_id"] == my_streamer:
+                continue
             try:
                 delta = abs((datetime.fromisoformat(at) -
                              datetime.fromisoformat(other["first_seen_at"])).total_seconds())

@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS streamers (
  id INTEGER PRIMARY KEY, platform TEXT NOT NULL, room_id TEXT NOT NULL, name TEXT NOT NULL,
  monitor_enabled INTEGER NOT NULL DEFAULT 1, priority INTEGER NOT NULL DEFAULT 5,
  status TEXT NOT NULL DEFAULT 'offline', last_error TEXT, status_at TEXT, last_seen_at TEXT,
+ source TEXT NOT NULL DEFAULT 'manual', viewer_count INTEGER, board_seen_at TEXT,
+ miss_count INTEGER NOT NULL DEFAULT 0,
  UNIQUE(platform, room_id));
 CREATE TABLE IF NOT EXISTS live_sessions (
  id INTEGER PRIMARY KEY, streamer_id INTEGER NOT NULL REFERENCES streamers(id),
@@ -50,6 +52,10 @@ class Database:
             "last_error": "TEXT",
             "status_at": "TEXT",
             "last_seen_at": "TEXT",
+            "source": "TEXT NOT NULL DEFAULT 'manual'",
+            "viewer_count": "INTEGER",
+            "board_seen_at": "TEXT",
+            "miss_count": "INTEGER NOT NULL DEFAULT 0",
         }.items():
             if name not in columns:
                 self.conn.execute(f"ALTER TABLE streamers ADD COLUMN {name} {definition}")
@@ -64,22 +70,27 @@ class Database:
         self.execute("UPDATE streamers SET last_seen_at=? WHERE id=?", (at, streamer_id))
 
     def seed_streamers(self, streamers):
+        """用 config 手工主播同步 DB。只清理/停用 source='manual' 的行——
+        板块自动发现（source='board'）写入的行必须保留，否则重启会被清掉。
+        """
         configured = {(s.platform, s.room_id) for s in streamers}
         if configured:
             placeholders = ",".join("(?,?)" for _ in configured)
             params = [value for pair in configured for value in pair]
             self.execute(
                 f"""DELETE FROM streamers
-                WHERE NOT EXISTS (SELECT 1 FROM live_sessions l WHERE l.streamer_id=streamers.id)
+                WHERE source='manual'
+                AND NOT EXISTS (SELECT 1 FROM live_sessions l WHERE l.streamer_id=streamers.id)
                 AND (platform, room_id) NOT IN ({placeholders})""",
                 params,
             )
             self.execute(
-                f"UPDATE streamers SET monitor_enabled=0 WHERE (platform, room_id) NOT IN ({placeholders})",
+                f"""UPDATE streamers SET monitor_enabled=0
+                WHERE source='manual' AND (platform, room_id) NOT IN ({placeholders})""",
                 params,
             )
         for s in streamers:
-            self.execute("""INSERT INTO streamers(platform,room_id,name,monitor_enabled,priority)
-                         VALUES(?,?,?,?,?) ON CONFLICT(platform,room_id) DO UPDATE SET name=excluded.name,
-                         monitor_enabled=excluded.monitor_enabled, priority=excluded.priority""",
+            self.execute("""INSERT INTO streamers(platform,room_id,name,monitor_enabled,priority,source)
+                         VALUES(?,?,?,?,?,'manual') ON CONFLICT(platform,room_id) DO UPDATE SET name=excluded.name,
+                         monitor_enabled=excluded.monitor_enabled, priority=excluded.priority, source='manual'""",
                         (s.platform, s.room_id, s.name, int(s.monitor_enabled), s.priority))

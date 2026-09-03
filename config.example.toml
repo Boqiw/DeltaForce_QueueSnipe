@@ -30,6 +30,19 @@ roi = [0.005, 0.004, 0.20, 0.024]
 pattern = "^CNUID[0-9]{33}$"
 missing_alert_frames = 30
 
+[discovery]
+# 三角洲直播板块页（如 https://live.douyin.com/categorynew/...）。
+# 留空 = 发现线程只记日志跳过（板块驱动整体关闭）。
+board_url = ""
+# 人气阈值：板块在播房间全部登记入库，仅 >= 此值才启用 OCR 监控线程。
+min_viewers = 10000
+# 两轮抓取间隔（秒）。
+interval_sec = 180
+# 板块页向下滚动次数（触发懒加载翻页取更多房卡）。
+scrolls = 8
+# 主播连续 N 轮不在板块列表 => 停用监控（保留历史行）。
+miss_limit = 2
+
 [[streamers]]
 platform = "bilibili"
 room_id = "example-room"

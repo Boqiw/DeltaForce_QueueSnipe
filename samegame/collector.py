@@ -1,9 +1,22 @@
-import logging, shlex, subprocess, sys
+import json, logging, shlex, subprocess, sys
 import threading
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
+
+@dataclass
+class BoardRoom:
+    """板块发现到的单个在播房间。viewer_count 未知时为 None。"""
+    room_id: str
+    name: str = ""
+    viewer_count: int | None = None
+
+@dataclass
+class BoardResult:
+    ok: bool
+    rooms: list
+    error: str | None = None
 
 class StreamResolver:
     def resolve(self, platform, room_url): raise NotImplementedError
@@ -83,3 +96,46 @@ class StreamlinkResolver(StreamResolver):
         finally:
             if platform == "douyin":
                 self._douyin_lock.release()
+
+
+def fetch_board(board_url: str, scrolls: int = 8, timeout: float = 180.0) -> BoardResult:
+    """抓取抖音板块在播房间列表。
+
+    板块页同样要走有头浏览器，且必须与直播间解析共用同一个抖音浏览器
+    profile —— 因此在 StreamlinkResolver._douyin_lock 内以子进程方式运行
+    samegame.douyin_board，保证不与房间解析并发抢同一个 profile/触发风控。
+    """
+    if not board_url:
+        return BoardResult(ok=False, rooms=[], error="board_url is empty")
+    args = [sys.executable, "-m", "samegame.douyin_board", board_url, str(scrolls)]
+    try:
+        with StreamlinkResolver._douyin_lock:
+            proc = subprocess.run(args, capture_output=True, text=True,
+                                  timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return BoardResult(ok=False, rooms=[], error=f"board crawl timeout ({timeout:.0f}s)")
+    except OSError as exc:
+        return BoardResult(ok=False, rooms=[], error=str(exc))
+    rooms: list[BoardRoom] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        rid = str(rec.get("room_id") or "")
+        if not rid.isdigit():
+            continue
+        viewer = rec.get("viewer_count")
+        rooms.append(BoardRoom(
+            room_id=rid,
+            name=str(rec.get("name") or "").strip(),
+            viewer_count=int(viewer) if isinstance(viewer, (int, float))
+            and not isinstance(viewer, bool) else None,
+        ))
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip() or f"exit code {proc.returncode}"
+        return BoardResult(ok=False, rooms=rooms, error=detail[:500])
+    return BoardResult(ok=True, rooms=rooms)
