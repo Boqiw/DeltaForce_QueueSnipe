@@ -25,9 +25,17 @@ def main():
                 if item:
                     item.id = row["id"]
                     thread = running.get(row["id"])
-                    if not thread or not thread.is_alive():
-                        thread = threading.Thread(target=LiveMonitor(db, resolver, cfg).run_streamer,
-                                                  args=(item,), daemon=True)
+                    if thread and not thread.is_alive():
+                        # 线程意外退出（正常情况 run_forever 不会返回），清理后重启。
+                        running.pop(row["id"], None)
+                        thread = None
+                    if not thread:
+                        monitor = LiveMonitor(db, resolver, cfg)
+                        # 每路主播一个常驻线程：内部自带"解析→直播监控(断流同URL重开)
+                        # → 离线指数退避→重试"循环，不再由 worker 每 5 秒反复重启。
+                        thread = threading.Thread(
+                            target=monitor.run_forever, args=(item,),
+                            daemon=True, name=f"mon-{item.name}")
                         running[row["id"]] = thread
                         thread.start()
             if not rows:

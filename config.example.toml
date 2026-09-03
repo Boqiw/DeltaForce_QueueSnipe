@@ -4,14 +4,29 @@ host = "127.0.0.1"
 port = 5000
 sample_interval_sec = 2
 code_poll_interval_sec = 45
-confirmation_frames = 3
+# 识别确认口径：1 帧有效解析即确认（CNUID 比对键已剔除分钟时间戳，
+# 跨分钟翻转不影响；连续 N 帧整串一致已废弃）。若面板出现瞬时噪声行可调到 2~3。
+confirmation_frames = 1
 overlap_window_sec = 300
+# 拉流 URL 有效期（抖音 FLV 约 15 分钟）。直播中 read 失败：URL 未过期则用同一
+# URL 直接重开拉流（不重跑浏览器解析），超过 reopen_max 次或过期才重新 resolve。
+url_ttl_sec = 900
+reopen_max = 5
+reopen_interval_sec = 5
+# 主播未开播时指数退避重查：base → *2 → cap。
+offline_backoff_base_sec = 30
+offline_backoff_max_sec = 300
+# 曾识别为直播、会话结束后短等待即重查（主播中途断流重连场景）。
+stream_end_retry_sec = 15
 log_level = "INFO"
 
 [ocr]
 # ROI 支持绝对像素 [x,y,w,h]，或用 [0,1] 之间的相对比例自动适配分辨率。
-# 对局代码位于画面左上角，实测标定自 2492x1415 截图（x 18~388, y 130~151）。
-roi = [0.005, 0.085, 0.16, 0.035]
+# 对局代码位于画面左上角最顶部，1080p 实测 x≈19~370, y≈7~26
+# （相对 x≈1%~19%, y≈0.6%~2.4%）。注意该行是抖音水印格式
+# CN UID:<prefix>_<yyyymmddHHMM>，识别键取其去掉末尾 12 位分钟时间戳的前段。
+roi = [0.005, 0.004, 0.20, 0.024]
+# pattern 仅用于非 CNUID 通用短码的整串匹配。
 pattern = "^CNUID[0-9]{33}$"
 missing_alert_frames = 30
 
