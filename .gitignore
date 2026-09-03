@@ -30,3 +30,6 @@ config.toml
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# ── 对接文件 ─────────────────────────────────────────────
+开发规格交接.md
