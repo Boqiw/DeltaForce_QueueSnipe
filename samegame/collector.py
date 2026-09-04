@@ -1,9 +1,15 @@
-import json, logging, shlex, subprocess, sys
+import json, logging, os, shlex, subprocess, sys
 import threading
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 log = logging.getLogger(__name__)
+
+# 抖音解析/板块抓取子进程会往 stdout/stderr 打印中文房名与提示。
+# 管道（capture_output）下 Python 默认用系统 ANSI 代码页，无法编码中文会抛
+# UnicodeEncodeError（stderr 中文也会崩）。统一强制 UTF-8，父进程同步 UTF-8 解码。
+_utf8_env = dict(os.environ)
+_utf8_env["PYTHONUTF8"] = "1"
 
 @dataclass
 class BoardRoom:
@@ -72,7 +78,9 @@ class StreamlinkResolver(StreamResolver):
                     args = [sys.executable, "-m", "streamlink", "--stream-url", candidate, self.quality]
                 for attempt in range(3):
                     try:
-                        result = subprocess.run(args, capture_output=True, text=True, timeout=90, check=True)
+                        result = subprocess.run(args, capture_output=True, text=True,
+                                                encoding="utf-8", env=_utf8_env,
+                                                timeout=90, check=True)
                         if "__OFFLINE__" in result.stdout:
                             # 明确未开播：正常状态，立即返回，不重试，避免离线主播
                             # 长时间占用抖音串行解析锁、阻塞在线主播。
@@ -108,9 +116,12 @@ def fetch_board(board_url: str, scrolls: int = 8, timeout: float = 180.0) -> Boa
     if not board_url:
         return BoardResult(ok=False, rooms=[], error="board_url is empty")
     args = [sys.executable, "-m", "samegame.douyin_board", board_url, str(scrolls)]
+    # 强制子进程 stdout/stderr 用 UTF-8，否则中文房名在管道里触发 UnicodeEncodeError；
+    # 父进程用 encoding="utf-8" 解码，两边严格对齐。
     try:
         with StreamlinkResolver._douyin_lock:
             proc = subprocess.run(args, capture_output=True, text=True,
+                                  encoding="utf-8", env=_utf8_env,
                                   timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return BoardResult(ok=False, rooms=[], error=f"board crawl timeout ({timeout:.0f}s)")

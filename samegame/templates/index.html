@@ -47,8 +47,11 @@ code{font-family:Consolas,"SF Mono",Menlo,monospace;background:#f1f3f7;border:1p
 const fmt=n=>n==null?'-':(n>=10000?Math.round(n/1000)/10+'万':String(n));
 const stInfo=x=>{if(x.status==='live')return['直播中','live'];if(x.status==='starting')return['正在连接','starting'];if(x.status==='reconnecting')return['重连中','reconnecting'];if(x.monitor_enabled)return['等待开播','standby'];return['未直播','off']};
 async function load(){let s=await (await fetch('/api/streamers')).json(),c=await (await fetch('/api/collisions')).json();
-const shown=s.filter(x=>x.online).sort((a,b)=>(b.viewer_count??-1)-(a.viewer_count??-1));
-document.querySelector('#count').textContent='共 '+shown.length+' 位'+(s.length>shown.length?'（另有 '+(s.length-shown.length)+' 位未直播已隐藏）':'');
+// 显示：直播中（须已有会话 online）＋ 已检测到直播但尚未连上（starting/重连中）；
+// offline/disabled 的历史行仍隐藏，避免面板被淹没。
+const shown=s.filter(x=>x.online||x.status==='starting'||x.status==='reconnecting').sort((a,b)=>(b.viewer_count??-1)-(a.viewer_count??-1));
+const waiting=s.filter(x=>x.monitor_enabled&&!(x.online||x.status==='starting'||x.status==='reconnecting')).length;
+document.querySelector('#count').textContent='共 '+shown.length+' 位直播/连接中'+(waiting?'（另有 '+waiting+' 位等待开播已隐藏）':'');
 document.querySelector('#streamers').innerHTML=shown.map(x=>{const[st,cls]=stInfo(x);const src=x.source==='manual'?'手动':'板块';return `<tr><td class="c-name"><div class="who"><b>${x.name}</b><span class="badge ${cls}">${st}</span></div><div class="meta">${x.platform} · 房号 ${x.room_id} · 来源：${src}</div></td><td class="c-view">${fmt(x.viewer_count)}</td><td class="c-code">${x.current_match_code?`<code>${x.current_match_code}</code>`:'<span class="na">暂无</span>'}</td></tr>`}).join('')||'<tr><td class="empty" colspan="3">当前暂无直播中的主播</td></tr>';
 document.querySelector('#collisions').innerHTML=c.map(x=>`<li class="hit"><b>${x.names}</b> 撞车（代码 ${x.match_code}，${x.started_at}）</li>`).join('')||'<li class="none">暂无事件</li>'}
 load();setInterval(load,5000);
